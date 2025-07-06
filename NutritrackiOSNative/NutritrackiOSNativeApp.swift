@@ -12,7 +12,11 @@ import SwiftData
 struct NutritrackiOSNativeApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            NutritionalInfo.self,
+            Ingredient.self,
+            DishIngredient.self,
+            Dish.self,
+            ConsumptionLog.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
