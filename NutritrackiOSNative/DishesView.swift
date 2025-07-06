@@ -9,9 +9,15 @@ import SwiftUI
 import SwiftData
 
 struct DishesView: View {
+    let onLogDish: ((APIDish) -> Void)?
+    
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var apiService: APIService
     @Query private var localDishes: [Dish]
+    
+    init(onLogDish: ((APIDish) -> Void)? = nil) {
+        self.onLogDish = onLogDish
+    }
     
     @State private var dishes: [APIDish] = []
     @State private var searchText = ""
@@ -77,7 +83,7 @@ struct DishesView: View {
                 }
             }
             .sheet(item: $selectedDish) { dish in
-                DishDetailView(dish: dish)
+                DishDetailView(dish: dish, onLogDish: onLogDish)
             }
             .alert("Error", isPresented: .constant(errorMessage != nil)) {
                 Button("OK") { errorMessage = nil }
@@ -260,6 +266,7 @@ struct EmptyDishesView: View {
 // MARK: - Dish Detail View
 struct DishDetailView: View {
     let dish: APIDish
+    let onLogDish: ((APIDish) -> Void)?
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -332,7 +339,7 @@ struct DishDetailView: View {
                     
                     // Action Button
                     Button(action: {
-                        // TODO: Navigate to track screen with this dish
+                        onLogDish?(dish)
                         dismiss()
                     }) {
                         HStack {

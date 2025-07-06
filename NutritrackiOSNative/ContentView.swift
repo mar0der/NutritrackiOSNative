@@ -11,35 +11,52 @@ import SwiftData
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var apiService = APIService.shared
+    @State private var selectedTab = 0
+    @State private var selectedDishForLogging: APIDish?
     
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             HomeView()
                 .tabItem {
                     Label("Home", systemImage: "house")
                 }
+                .tag(0)
             
             IngredientsView()
                 .tabItem {
                     Label("Ingredients", systemImage: "carrot")
                 }
+                .tag(1)
             
-            DishesView()
+            DishesView(onLogDish: logDish)
                 .tabItem {
                     Label("Dishes", systemImage: "forkandknife")
                 }
+                .tag(2)
             
-            TrackView()
+            TrackView(preselectedDish: selectedDishForLogging)
                 .tabItem {
                     Label("Track", systemImage: "chart.bar")
+                }
+                .tag(3)
+                .onChange(of: selectedTab) { newTab in
+                    if newTab != 3 {
+                        selectedDishForLogging = nil
+                    }
                 }
             
             RecommendationsView()
                 .tabItem {
                     Label("Recommendations", systemImage: "sparkles")
                 }
+                .tag(4)
         }
         .environmentObject(apiService)
+    }
+    
+    private func logDish(_ dish: APIDish) {
+        selectedDishForLogging = dish
+        selectedTab = 3
     }
 }
 
@@ -202,6 +219,8 @@ struct QuickActionButton: View {
 // MARK: - Placeholder Views (IngredientsView and DishesView moved to separate files)
 
 struct TrackView: View {
+    let preselectedDish: APIDish?
+    
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var apiService: APIService
     @Query private var localLogs: [ConsumptionLog]
@@ -213,6 +232,10 @@ struct TrackView: View {
     @State private var showingAddSheet = false
     @State private var errorMessage: String?
     @State private var selectedDate = Date()
+    
+    init(preselectedDish: APIDish? = nil) {
+        self.preselectedDish = preselectedDish
+    }
     
     var body: some View {
         NavigationView {
@@ -258,7 +281,8 @@ struct TrackView: View {
             .sheet(isPresented: $showingAddSheet) {
                 AddConsumptionLogSheet(
                     availableIngredients: availableIngredients,
-                    availableDishes: availableDishes
+                    availableDishes: availableDishes,
+                    preselectedDish: preselectedDish
                 ) { log in
                     await createConsumptionLog(log)
                 }
@@ -270,6 +294,11 @@ struct TrackView: View {
             }
             .task {
                 await loadData()
+            }
+            .onAppear {
+                if preselectedDish != nil {
+                    showingAddSheet = true
+                }
             }
         }
     }
@@ -684,6 +713,7 @@ struct ConsumptionLogRow: View {
 struct AddConsumptionLogSheet: View {
     let availableIngredients: [APIIngredient]
     let availableDishes: [APIDish]
+    let preselectedDish: APIDish?
     let onSave: (CreateConsumptionLogRequest) async -> Void
     
     @Environment(\.dismiss) private var dismiss
@@ -694,17 +724,41 @@ struct AddConsumptionLogSheet: View {
     @State private var selectedUnit = "g"
     @State private var consumedAt = Date()
     
-    private let units = ["g", "kg", "ml", "l", "cup", "tbsp", "tsp", "piece", "slice"]
+    init(availableIngredients: [APIIngredient], availableDishes: [APIDish], preselectedDish: APIDish? = nil, onSave: @escaping (CreateConsumptionLogRequest) async -> Void) {
+        self.availableIngredients = availableIngredients
+        self.availableDishes = availableDishes
+        self.preselectedDish = preselectedDish
+        self.onSave = onSave
+        
+        // Initialize state based on preselected dish
+        if let dish = preselectedDish {
+            _selectedType = State(initialValue: .dish)
+            _selectedDishId = State(initialValue: dish.id)
+            _quantity = State(initialValue: 1)
+            _selectedUnit = State(initialValue: "serving")
+        }
+    }
+    
+    private let units = ["g", "kg", "ml", "l", "cup", "tbsp", "tsp", "piece", "slice", "serving"]
     
     var body: some View {
         NavigationView {
             Form {
                 Section("What did you consume?") {
-                    Picker("Type", selection: $selectedType) {
-                        Text("Ingredient").tag(ConsumptionType.ingredient)
-                        Text("Recipe").tag(ConsumptionType.dish)
+                    if preselectedDish == nil {
+                        Picker("Type", selection: $selectedType) {
+                            Text("Ingredient").tag(ConsumptionType.ingredient)
+                            Text("Recipe").tag(ConsumptionType.dish)
+                        }
+                        .pickerStyle(SegmentedPickerStyle())
+                    } else {
+                        HStack {
+                            Text("Type")
+                            Spacer()
+                            Text("Recipe")
+                                .foregroundColor(.secondary)
+                        }
                     }
-                    .pickerStyle(SegmentedPickerStyle())
                     
                     if selectedType == .ingredient {
                         Picker("Ingredient", selection: $selectedIngredientId) {
@@ -714,10 +768,19 @@ struct AddConsumptionLogSheet: View {
                             }
                         }
                     } else {
-                        Picker("Recipe", selection: $selectedDishId) {
-                            Text("Select recipe").tag(String?.none)
-                            ForEach(availableDishes, id: \.id) { dish in
-                                Text(dish.name).tag(String?.some(dish.id))
+                        if let preselectedDish = preselectedDish {
+                            HStack {
+                                Text("Recipe")
+                                Spacer()
+                                Text(preselectedDish.name)
+                                    .foregroundColor(.secondary)
+                            }
+                        } else {
+                            Picker("Recipe", selection: $selectedDishId) {
+                                Text("Select recipe").tag(String?.none)
+                                ForEach(availableDishes, id: \.id) { dish in
+                                    Text(dish.name).tag(String?.some(dish.id))
+                                }
                             }
                         }
                     }
