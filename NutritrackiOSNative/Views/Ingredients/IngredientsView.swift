@@ -539,6 +539,30 @@ extension APINutritionalInfo {
     }
 }
 
+extension APIIngredient {
+    func toLocal() -> Ingredient {
+        return Ingredient(
+            id: id,
+            name: name,
+            category: category,
+            nutritionalInfo: nutritionPer100g?.toLocal()
+        )
+    }
+}
+
+extension APIDish {
+    func toLocal(userId: String? = nil) -> Dish {
+        return Dish(
+            id: id,
+            name: name,
+            description: description,
+            instructions: instructions,
+            servings: servings,
+            userId: userId
+        )
+    }
+}
+
 #Preview {
     IngredientsView()
         .environmentObject(APIService.shared)

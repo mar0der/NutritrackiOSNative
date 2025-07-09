@@ -49,6 +49,7 @@ struct NutritrackiOSNativeApp: App {
                 } else {
                     LoginView()
                         .environmentObject(authService)
+                        .environmentObject(apiService)
                 }
             }
             .onOpenURL { url in
