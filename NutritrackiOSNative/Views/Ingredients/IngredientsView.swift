@@ -106,13 +106,20 @@ struct IngredientsView: View {
                 }
             }
             .navigationTitle("Ingredients")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showingAddSheet = true }) {
-                        Image(systemName: "plus")
+            .overlay(
+                // Floating Action Button
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        FloatingActionButton(icon: "plus", color: .blue) {
+                            showingAddSheet = true
+                        }
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 20) // Position above tab bar with similar spacing to edge
                     }
                 }
-            }
+            )
             .sheet(isPresented: $showingAddSheet) {
                 AddIngredientSheet { ingredient in
                     await createIngredient(ingredient)

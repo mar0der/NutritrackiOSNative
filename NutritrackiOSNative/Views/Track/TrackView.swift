@@ -65,13 +65,20 @@ struct TrackView: View {
                 }
             }
             .navigationTitle("Track Consumption")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showingAddSheet = true }) {
-                        Image(systemName: "plus")
+            .overlay(
+                // Floating Action Button
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        FloatingActionButton(icon: "plus", color: .green) {
+                            showingAddSheet = true
+                        }
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 20)
                     }
                 }
-            }
+            )
             .sheet(isPresented: $showingAddSheet) {
                 AddConsumptionLogSheet(
                     availableIngredients: viewModel.availableIngredients,

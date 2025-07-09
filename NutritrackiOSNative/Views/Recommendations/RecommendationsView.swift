@@ -66,16 +66,20 @@ struct RecommendationsView: View {
                 }
             }
             .navigationTitle("Recommendations")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: {
-                        Task { await viewModel.loadRecommendations() }
-                    }) {
-                        Image(systemName: "arrow.clockwise")
+            .overlay(
+                // Floating Action Button
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        FloatingActionButton(icon: "arrow.clockwise", color: .purple) {
+                            Task { await viewModel.loadRecommendations() }
+                        }
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 20)
                     }
-                    .disabled(viewModel.isLoading)
                 }
-            }
+            )
             .customErrorAlert(errorMessage: $viewModel.errorMessage)
             .task {
                 await viewModel.loadRecommendations()
