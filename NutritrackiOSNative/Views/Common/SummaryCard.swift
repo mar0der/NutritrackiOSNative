@@ -32,7 +32,7 @@ struct SummaryCard: View {
                 .lineLimit(2)
                 .frame(height: 32)
         }
-        .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 120)
+        .frame(maxWidth: .infinity, minHeight: 100, maxHeight: 100)
         .padding()
         .background(Color(.systemGray6))
         .cornerRadius(12)

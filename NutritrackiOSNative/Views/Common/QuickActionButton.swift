@@ -25,7 +25,8 @@ struct QuickActionButton: View {
                 Spacer()
             }
             .foregroundColor(.white)
-            .padding()
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             .background(color)
             .cornerRadius(12)
         }

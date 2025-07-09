@@ -34,18 +34,19 @@ struct HomeView: View {
     
     var body: some View {
         NavigationView {
-            ScrollView {
-                VStack(spacing: 20) {
-                    // Welcome Section
-                    WelcomeSection(
-                        userName: authService.currentUser?.name ?? "User",
-                        onLogout: {
-                            Task {
-                                await viewModel.logout()
-                            }
+            VStack(spacing: 0) {
+                // Custom Header
+                CustomHeader(
+                    user: authService.currentUser,
+                    onLogout: {
+                        Task {
+                            await viewModel.logout()
                         }
-                    )
-                    
+                    }
+                )
+                
+                // Main Content
+                VStack(spacing: 12) {
                     // Summary Cards
                     SummarySection(
                         ingredientsCount: ingredients.count,
@@ -55,7 +56,7 @@ struct HomeView: View {
                     )
                     
                     // Health Integration
-                    HealthIntegrationCard()
+                    CompactHealthCard()
                         .padding(.horizontal)
                     
                     // Quick Actions
@@ -64,10 +65,11 @@ struct HomeView: View {
                         onNavigateToDishes: onNavigateToDishes
                     )
                     
-                    Spacer()
+                    Spacer(minLength: 0)
                 }
+                .padding(.top, 8)
             }
-            .navigationTitle("Home")
+            .navigationBarHidden(true)
             .onAppear {
                 viewModel.calculateTodaysLogs(from: consumptionLogs)
                 Task {
@@ -78,35 +80,73 @@ struct HomeView: View {
     }
 }
 
-// MARK: - Welcome Section
-struct WelcomeSection: View {
-    let userName: String
+// MARK: - Custom Header
+struct CustomHeader: View {
+    let user: User?
     let onLogout: () -> Void
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("Welcome, \(userName)!")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                    
-                    Text("Track your nutrition and discover variety")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
+        HStack(spacing: 12) {
+            // Profile Image
+            ProfileImageView(avatarURL: user?.avatar)
+            
+            // User Info
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Welcome, \(user?.name ?? "User")!")
+                    .font(.title2)
+                    .fontWeight(.bold)
                 
-                Spacer()
-                
-                Button(action: onLogout) {
-                    Image(systemName: "person.crop.circle.fill.badge.minus")
-                        .font(.title2)
-                        .foregroundColor(.red)
-                }
+                Text("Track your nutrition and discover variety")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            
+            Spacer()
+            
+            // Logout Button
+            Button(action: onLogout) {
+                Image(systemName: "rectangle.portrait.and.arrow.right")
+                    .font(.title3)
+                    .foregroundColor(.red)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(Color(.systemBackground))
+    }
+}
+
+// MARK: - Profile Image View
+struct ProfileImageView: View {
+    let avatarURL: String?
+    
+    var body: some View {
+        Group {
+            if let avatarURL = avatarURL, let url = URL(string: avatarURL) {
+                AsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Circle()
+                        .fill(Color.gray.opacity(0.3))
+                        .overlay(
+                            Image(systemName: "person.fill")
+                                .foregroundColor(.gray)
+                        )
+                }
+            } else {
+                Circle()
+                    .fill(Color.blue.opacity(0.2))
+                    .overlay(
+                        Image(systemName: "person.fill")
+                            .foregroundColor(.blue)
+                    )
+            }
+        }
+        .frame(width: 40, height: 40)
+        .clipShape(Circle())
     }
 }
 
@@ -118,8 +158,8 @@ struct SummarySection: View {
     let varietyScore: Double
     
     var body: some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 16) {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
                 SummaryCard(
                     title: "Ingredients",
                     value: "\(ingredientsCount)",
@@ -130,12 +170,12 @@ struct SummarySection: View {
                 SummaryCard(
                     title: "Dishes",
                     value: "\(dishesCount)",
-                    icon: "forkandknife",
+                    icon: "fork.knife",
                     color: .blue
                 )
             }
             
-            HStack(spacing: 16) {
+            HStack(spacing: 12) {
                 SummaryCard(
                     title: "Today's Logs",
                     value: "\(todaysLogs)",
@@ -161,12 +201,12 @@ struct QuickActionsSection: View {
     let onNavigateToDishes: () -> Void
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             Text("Quick Actions")
                 .font(.headline)
                 .padding(.horizontal)
             
-            HStack(spacing: 16) {
+            HStack(spacing: 12) {
                 QuickActionButton(
                     title: "Log Meal",
                     icon: "plus.circle",
@@ -197,4 +237,49 @@ struct QuickActionsSection: View {
         .environmentObject(APIService.shared)
         .environmentObject(HealthKitManager())
         .modelContainer(for: Ingredient.self, inMemory: true)
+}
+
+// MARK: - Compact Health Card
+struct CompactHealthCard: View {
+    @EnvironmentObject private var healthKitManager: HealthKitManager
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "heart.fill")
+                .font(.title2)
+                .foregroundColor(healthKitManager.isAuthorized ? .red : .gray)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Health Integration")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                
+                Text(healthKitManager.isAuthorized ? "Connected" : "Tap to connect")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            
+            Spacer()
+            
+            if healthKitManager.isAuthorized {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title3)
+                    .foregroundColor(.green)
+            } else {
+                Image(systemName: "arrow.right.circle")
+                    .font(.title3)
+                    .foregroundColor(.blue)
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
+        .onTapGesture {
+            if !healthKitManager.isAuthorized {
+                Task {
+                    await healthKitManager.requestCorePermissions()
+                }
+            }
+        }
+    }
 }
