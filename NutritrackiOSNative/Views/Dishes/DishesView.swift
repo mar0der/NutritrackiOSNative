@@ -115,8 +115,11 @@ struct DishesView: View {
         
         do {
             let searchQuery = searchText.isEmpty ? nil : searchText
+            print("🍽️ DishesView: Starting to load dishes...")
             dishes = try await apiService.getDishes()
+            print("🍽️ DishesView: Loaded \(dishes.count) dishes successfully")
         } catch {
+            print("🍽️ DishesView: Failed to load dishes - \(error)")
             errorMessage = "Failed to load recipes: \(error.localizedDescription)"
         }
         
