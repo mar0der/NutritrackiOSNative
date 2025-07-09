@@ -19,7 +19,12 @@ struct HomeView: View {
     
     @StateObject private var viewModel: HomeViewModel
     
-    init() {
+    let onNavigateToTrack: () -> Void
+    let onNavigateToDishes: () -> Void
+    
+    init(onNavigateToTrack: @escaping () -> Void = {}, onNavigateToDishes: @escaping () -> Void = {}) {
+        self.onNavigateToTrack = onNavigateToTrack
+        self.onNavigateToDishes = onNavigateToDishes
         self._viewModel = StateObject(wrappedValue: HomeViewModel(
             authService: AuthService.shared,
             apiService: APIService.shared,
@@ -54,7 +59,10 @@ struct HomeView: View {
                         .padding(.horizontal)
                     
                     // Quick Actions
-                    QuickActionsSection()
+                    QuickActionsSection(
+                        onNavigateToTrack: onNavigateToTrack,
+                        onNavigateToDishes: onNavigateToDishes
+                    )
                     
                     Spacer()
                 }
@@ -149,6 +157,9 @@ struct SummarySection: View {
 
 // MARK: - Quick Actions Section
 struct QuickActionsSection: View {
+    let onNavigateToTrack: () -> Void
+    let onNavigateToDishes: () -> Void
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Quick Actions")
@@ -161,7 +172,7 @@ struct QuickActionsSection: View {
                     icon: "plus.circle",
                     color: .green
                 ) {
-                    // TODO: Navigate to track screen
+                    onNavigateToTrack()
                 }
                 
                 QuickActionButton(
@@ -169,7 +180,7 @@ struct QuickActionsSection: View {
                     icon: "book",
                     color: .blue
                 ) {
-                    // TODO: Navigate to dishes screen
+                    onNavigateToDishes()
                 }
             }
             .padding(.horizontal)
@@ -178,7 +189,10 @@ struct QuickActionsSection: View {
 }
 
 #Preview {
-    HomeView()
+    HomeView(
+        onNavigateToTrack: { print("Navigate to Track") },
+        onNavigateToDishes: { print("Navigate to Dishes") }
+    )
         .environmentObject(AuthService.shared)
         .environmentObject(APIService.shared)
         .environmentObject(HealthKitManager())

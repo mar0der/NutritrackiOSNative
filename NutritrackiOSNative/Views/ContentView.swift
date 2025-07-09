@@ -17,7 +17,10 @@ struct ContentView: View {
     
     var body: some View {
         TabView(selection: $selectedTab) {
-            HomeView()
+            HomeView(
+                onNavigateToTrack: { selectedTab = 3 },
+                onNavigateToDishes: { selectedTab = 2 }
+            )
                 .tabItem {
                     Label("Home", systemImage: "house")
                 }
@@ -31,7 +34,7 @@ struct ContentView: View {
             
             DishesView(onLogDish: logDish)
                 .tabItem {
-                    Label("Dishes", systemImage: "forkandknife")
+                    Label("Dishes", systemImage: "fork.knife")
                 }
                 .tag(2)
             
