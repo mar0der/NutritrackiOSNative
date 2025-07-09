@@ -148,16 +148,12 @@ struct IngredientsView: View {
         isLoading = true
         
         do {
-            print("🔄 Loading ingredients from API...")
             ingredients = try await apiService.getIngredients()
-            print("✅ Successfully loaded \(ingredients.count) ingredients")
             errorMessage = nil
         } catch {
             if Task.isCancelled {
-                print("🚫 Ingredients loading cancelled")
                 return
             }
-            print("❌ Failed to load ingredients: \(error)")
             errorMessage = "Failed to load ingredients: \(error.localizedDescription)"
         }
         
@@ -167,9 +163,7 @@ struct IngredientsView: View {
     @MainActor
     private func createIngredient(_ request: CreateIngredientRequest) async {
         do {
-            print("🔄 Creating ingredient: \(request.name)")
             let newIngredient = try await apiService.createIngredient(request)
-            print("✅ Successfully created ingredient: \(newIngredient.name) with ID: \(newIngredient.id)")
             
             ingredients.append(newIngredient)
             
@@ -181,12 +175,10 @@ struct IngredientsView: View {
                 nutritionalInfo: newIngredient.nutritionPer100g?.toLocal()
             )
             modelContext.insert(localIngredient)
-            print("✅ Saved ingredient to local SwiftData")
             
             // Clear any previous error messages
             errorMessage = nil
         } catch {
-            print("❌ Failed to create ingredient: \(error)")
             errorMessage = "Failed to create ingredient: \(error.localizedDescription)"
         }
     }

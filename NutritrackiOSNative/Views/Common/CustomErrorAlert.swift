@@ -12,6 +12,7 @@ struct CustomErrorAlert: View {
     let message: String
     let onDismiss: () -> Void
     @State private var isVisible = false
+    @State private var copyButtonText = "Copy Error"
     
     // Configuration for message display
     private let maxDisplayLength = 80 // characters for single line display
@@ -68,13 +69,13 @@ struct CustomErrorAlert: View {
                     // Small copy button - always visible
                     Button(action: copyErrorToClipboard) {
                         HStack(spacing: 4) {
-                            Image(systemName: "doc.on.clipboard")
+                            Image(systemName: copyButtonText == "Copy Error" ? "doc.on.clipboard" : "checkmark")
                                 .font(.caption)
-                            Text("Copy Error")
+                            Text(copyButtonText)
                                 .font(.caption)
                                 .fontWeight(.medium)
                         }
-                        .foregroundColor(.blue)
+                        .foregroundColor(copyButtonText == "Copy Error" ? .blue : .green)
                     }
                     .padding(.top, 4)
                 }
@@ -120,10 +121,26 @@ struct CustomErrorAlert: View {
     }
     
     private func copyErrorToClipboard() {
-        UIPasteboard.general.string = message
-        // Optional: Add haptic feedback
-        let impactFeedback = UIImpactFeedbackGenerator(style: .light)
-        impactFeedback.impactOccurred()
+        // Ensure clipboard operation is on main thread
+        DispatchQueue.main.async {
+            UIPasteboard.general.string = message
+            
+            // Update button text to show success
+            withAnimation(.easeInOut(duration: 0.2)) {
+                copyButtonText = "Copied!"
+            }
+            
+            // Add haptic feedback
+            let impactFeedback = UIImpactFeedbackGenerator(style: .light)
+            impactFeedback.impactOccurred()
+            
+            // Reset button text after delay
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    copyButtonText = "Copy Error"
+                }
+            }
+        }
     }
 }
 
