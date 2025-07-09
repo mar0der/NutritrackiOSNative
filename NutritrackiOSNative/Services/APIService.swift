@@ -14,9 +14,14 @@ struct APIIngredient: Codable, Identifiable {
     let id: String
     let name: String
     let category: String
-    let nutritionPer100g: APINutritionalInfo?
+    let nutritionalInfo: APINutritionalInfo?
     let createdAt: String
     let updatedAt: String
+    
+    // Computed property for backwards compatibility
+    var nutritionPer100g: APINutritionalInfo? {
+        return nutritionalInfo
+    }
 }
 
 struct APINutritionalInfo: Codable {
@@ -32,11 +37,16 @@ struct APIDish: Codable, Identifiable {
     let name: String
     let description: String?
     let instructions: String?
-    let servings: Int
-    let userId: String
+    let servings: Int?
+    let userId: String?
     let createdAt: String
     let updatedAt: String
-    let ingredients: [APIDishIngredient]
+    let dishIngredients: [APIDishIngredient]
+    
+    // Computed property for backwards compatibility
+    var ingredients: [APIDishIngredient] {
+        return dishIngredients
+    }
 }
 
 struct APIDishIngredient: Codable {
@@ -50,15 +60,12 @@ struct APIDishIngredient: Codable {
 
 struct APIConsumptionLog: Codable, Identifiable {
     let id: String
-    let userId: String
-    let type: String
+    let userId: String?
     let ingredientId: String?
     let dishId: String?
     let quantity: Double?
     let unit: String?
-    let servings: Double?
     let consumedAt: String
-    let createdAt: String
     let ingredient: APIIngredient?
     let dish: APIDish?
 }
@@ -111,11 +118,10 @@ struct UpdateDishRequest: Codable {
 }
 
 struct CreateConsumptionLogRequest: Codable {
-    let type: String
-    let itemId: String
-    let quantity: Double?
+    let ingredientId: String?
+    let dishId: String?
+    let quantity: Double
     let unit: String?
-    let servings: Double?
     let consumedAt: String?
 }
 
@@ -149,37 +155,24 @@ class APIService: ObservableObject {
     
     private func handleResponse<T: Codable>(_ data: Data, _ response: URLResponse, type: T.Type) throws -> T {
         if let httpResponse = response as? HTTPURLResponse {
-            print("🔍 handleResponse: HTTP Status \(httpResponse.statusCode)")
             if httpResponse.statusCode == 401 {
                 // Token expired, logout user
                 Task { await authService.logout() }
                 throw APIError.unauthorized
             }
             if httpResponse.statusCode >= 400 {
-                print("❌ handleResponse: Error status \(httpResponse.statusCode)")
                 // Try to parse structured error response
                 if let errorResponse = try? JSONDecoder().decode(APIErrorResponse.self, from: data) {
-                    print("📋 handleResponse: Structured error - \(errorResponse)")
                     throw APIError.serverErrorWithMessage(httpResponse.statusCode, errorResponse.message ?? errorResponse.error ?? "Unknown error")
                 } else if let errorMessage = String(data: data, encoding: .utf8) {
-                    print("📋 handleResponse: Raw error - \(errorMessage)")
                     throw APIError.serverErrorWithMessage(httpResponse.statusCode, errorMessage)
                 } else {
-                    print("📋 handleResponse: No error message available")
                     throw APIError.serverError(httpResponse.statusCode)
                 }
             }
         }
         
-        print("🔧 handleResponse: Attempting to decode \(type)")
-        do {
-            let result = try JSONDecoder().decode(T.self, from: data)
-            print("✅ handleResponse: Successfully decoded \(type)")
-            return result
-        } catch {
-            print("❌ handleResponse: Decoding failed for \(type): \(error)")
-            throw error
-        }
+        return try JSONDecoder().decode(T.self, from: data)
     }
     
     // MARK: - Ingredients API
@@ -237,66 +230,12 @@ class APIService: ObservableObject {
         let request = createAuthenticatedRequest(for: url)
         let (data, response) = try await session.data(for: request)
         
-        // Debug logging to see what's actually happening
-        print("🌐 Dishes API URL: \(url)")
-        print("🔐 Auth token present: \(authService.getAuthToken() != nil)")
-        print("📊 Response status: \((response as? HTTPURLResponse)?.statusCode ?? 0)")
-        print("📏 Response data size: \(data.count) bytes")
-        
-        if let responseString = String(data: data, encoding: .utf8) {
-            print("📄 Raw response: \(responseString)")
-        }
-        
         // Handle empty response
         if data.isEmpty {
-            print("⚠️ Empty response, returning empty array")
             return []
         }
         
-        // Check HTTP status
-        if let httpResponse = response as? HTTPURLResponse {
-            print("🔍 HTTP Status: \(httpResponse.statusCode)")
-            if httpResponse.statusCode != 200 {
-                print("❌ Non-200 status code received")
-            }
-        }
-        
-        do {
-            let result = try handleResponse(data, response, type: [APIDish].self)
-            print("✅ Successfully decoded \(result.count) dishes")
-            return result
-        } catch {
-            print("❌ Decoding failed: \(error)")
-            if let decodingError = error as? DecodingError {
-                print("📋 Decoding error details:")
-                switch decodingError {
-                case .dataCorrupted(let context):
-                    print("  Data corrupted: \(context)")
-                case .keyNotFound(let key, let context):
-                    print("  Key '\(key)' not found: \(context)")
-                case .typeMismatch(let type, let context):
-                    print("  Type mismatch for \(type): \(context)")
-                case .valueNotFound(let type, let context):
-                    print("  Value not found for \(type): \(context)")
-                @unknown default:
-                    print("  Unknown decoding error")
-                }
-            }
-            
-            // If decoding fails, try to check if it's a null response
-            if let responseString = String(data: data, encoding: .utf8) {
-                print("🔍 Trying to handle special cases for response: \(responseString)")
-                
-                // Check if response is null or empty object
-                if responseString.trimmingCharacters(in: .whitespacesAndNewlines) == "null" ||
-                   responseString.trimmingCharacters(in: .whitespacesAndNewlines) == "{}" {
-                    print("⚠️ Server returned null/empty object, treating as empty array")
-                    return []
-                }
-            }
-            
-            throw error
-        }
+        return try handleResponse(data, response, type: [APIDish].self)
     }
     
     func getDish(id: String) async throws -> APIDish {

@@ -265,11 +265,10 @@ struct AddConsumptionLogSheet: View {
     
     private func saveConsumptionLog() async {
         let request = CreateConsumptionLogRequest(
-            type: selectedType == .ingredient ? "ingredient" : "dish",
-            itemId: selectedType == .ingredient ? (selectedIngredientId ?? "") : (selectedDishId ?? ""),
-            quantity: selectedType == .ingredient ? quantity : nil,
-            unit: selectedType == .ingredient ? selectedUnit : nil,
-            servings: selectedType == .dish ? quantity : nil,
+            ingredientId: selectedType == .ingredient ? selectedIngredientId : nil,
+            dishId: selectedType == .dish ? selectedDishId : nil,
+            quantity: quantity,
+            unit: selectedType == .ingredient ? selectedUnit : "serving",
             consumedAt: DateHelpers.formatToISO8601(consumedAt)
         )
         

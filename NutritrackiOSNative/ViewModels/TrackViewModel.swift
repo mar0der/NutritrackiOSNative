@@ -84,11 +84,11 @@ class TrackViewModel: ObservableObject {
             let localLog = ConsumptionLog(
                 id: newLog.id,
                 userId: authService.currentUser?.id,
-                type: newLog.type,
+                type: newLog.ingredientId != nil ? "ingredient" : "dish",
                 consumedAt: ISO8601DateFormatter().date(from: newLog.consumedAt) ?? Date(),
                 quantity: newLog.quantity,
                 unit: newLog.unit,
-                servings: newLog.servings,
+                servings: newLog.dishId != nil ? newLog.quantity : nil,
                 ingredient: availableIngredients.first(where: { $0.id == newLog.ingredientId })?.toLocal(),
                 dish: availableDishes.first(where: { $0.id == newLog.dishId })?.toLocal(userId: authService.currentUser?.id)
             )
@@ -153,8 +153,8 @@ class TrackViewModel: ObservableObject {
                 }
             }
             
-            // Apply dish serving size
-            let servingMultiplier = consumptionLog.servings ?? 1.0
+            // Apply dish serving size (use quantity for dishes)
+            let servingMultiplier = consumptionLog.quantity ?? 1.0
             nutritionData["calories"] = totalCalories * servingMultiplier
             nutritionData["protein"] = totalProtein * servingMultiplier
             nutritionData["carbs"] = totalCarbs * servingMultiplier
