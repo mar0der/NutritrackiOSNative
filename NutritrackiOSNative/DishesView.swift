@@ -13,6 +13,7 @@ struct DishesView: View {
     
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var apiService: APIService
+    @EnvironmentObject private var authService: AuthService
     @Query private var localDishes: [Dish]
     
     init(onLogDish: ((APIDish) -> Void)? = nil) {
@@ -58,8 +59,22 @@ struct DishesView: View {
                         ForEach(dishes, id: \.id) { dish in
                             DishRow(dish: dish) {
                                 selectedDish = dish
-                            } deleteAction: {
-                                await deleteDish(dish)
+                            }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    Task {
+                                        await deleteDish(dish)
+                                    }
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                                
+                                Button {
+                                    selectedDish = dish
+                                } label: {
+                                    Label("View", systemImage: "eye")
+                                }
+                                .tint(.blue)
                             }
                         }
                     }
@@ -85,11 +100,7 @@ struct DishesView: View {
             .sheet(item: $selectedDish) { dish in
                 DishDetailView(dish: dish, onLogDish: onLogDish)
             }
-            .alert("Error", isPresented: .constant(errorMessage != nil)) {
-                Button("OK") { errorMessage = nil }
-            } message: {
-                Text(errorMessage ?? "")
-            }
+            .customErrorAlert(errorMessage: $errorMessage)
             .task {
                 await loadDishes()
             }
@@ -104,7 +115,7 @@ struct DishesView: View {
         
         do {
             let searchQuery = searchText.isEmpty ? nil : searchText
-            dishes = try await apiService.getDishes(search: searchQuery)
+            dishes = try await apiService.getDishes()
         } catch {
             errorMessage = "Failed to load recipes: \(error.localizedDescription)"
         }
@@ -123,7 +134,9 @@ struct DishesView: View {
                 id: newDish.id,
                 name: newDish.name,
                 description: newDish.description,
-                instructions: newDish.instructions
+                instructions: newDish.instructions,
+                servings: newDish.servings,
+                userId: authService.currentUser?.id
             )
             modelContext.insert(localDish)
         } catch {
@@ -151,9 +164,6 @@ struct DishesView: View {
 struct DishRow: View {
     let dish: APIDish
     let viewAction: () -> Void
-    let deleteAction: () async -> Void
-    
-    @State private var isDeleting = false
     
     var body: some View {
         HStack {
@@ -169,7 +179,7 @@ struct DishRow: View {
                 }
                 
                 HStack {
-                    Text("\(dish.dishIngredients.count) ingredients")
+                    Text("\(dish.ingredients.count) ingredients")
                         .font(.caption)
                         .foregroundColor(.blue)
                     
@@ -177,13 +187,13 @@ struct DishRow: View {
                     
                     // Ingredient icons preview
                     HStack(spacing: 2) {
-                        ForEach(dish.dishIngredients.prefix(4), id: \.ingredient.id) { dishIngredient in
+                        ForEach(dish.ingredients.prefix(4), id: \.ingredient.id) { dishIngredient in
                             Text(iconForCategory(dishIngredient.ingredient.category))
                                 .font(.caption)
                         }
                         
-                        if dish.dishIngredients.count > 4 {
-                            Text("+\(dish.dishIngredients.count - 4)")
+                        if dish.ingredients.count > 4 {
+                            Text("+\(dish.ingredients.count - 4)")
                                 .font(.caption2)
                                 .foregroundColor(.secondary)
                         }
@@ -192,34 +202,12 @@ struct DishRow: View {
             }
             
             Spacer()
-            
-            HStack(spacing: 8) {
-                Button(action: viewAction) {
-                    Image(systemName: "eye")
-                        .foregroundColor(.blue)
-                }
-                .buttonStyle(BorderlessButtonStyle())
-                
-                Button(action: {
-                    isDeleting = true
-                    Task {
-                        await deleteAction()
-                        isDeleting = false
-                    }
-                }) {
-                    if isDeleting {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    } else {
-                        Image(systemName: "trash")
-                            .foregroundColor(.red)
-                    }
-                }
-                .buttonStyle(BorderlessButtonStyle())
-                .disabled(isDeleting)
-            }
         }
         .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            viewAction()
+        }
     }
     
     private func iconForCategory(_ category: String) -> String {
@@ -286,7 +274,7 @@ struct DishDetailView: View {
                         }
                         
                         HStack {
-                            Label("\(dish.dishIngredients.count)", systemImage: "list.bullet")
+                            Label("\(dish.ingredients.count)", systemImage: "list.bullet")
                             Text("ingredients")
                         }
                         .font(.caption)
@@ -300,7 +288,7 @@ struct DishDetailView: View {
                             .font(.headline)
                         
                         LazyVStack(spacing: 8) {
-                            ForEach(dish.dishIngredients, id: \.ingredient.id) { dishIngredient in
+                            ForEach(dish.ingredients, id: \.ingredient.id) { dishIngredient in
                                 HStack {
                                     Text(iconForCategory(dishIngredient.ingredient.category))
                                         .font(.title2)
@@ -481,6 +469,7 @@ struct AddDishSheet: View {
             name: name,
             description: description.isEmpty ? nil : description,
             instructions: instructions.isEmpty ? nil : instructions,
+            servings: 1, // Default to 1 serving
             ingredients: ingredients
         )
         

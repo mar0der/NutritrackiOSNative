@@ -3,6 +3,7 @@
 //  NutritrackiOSNative
 //
 //  Created by Petar Petkov on 06/07/2025.
+//  Updated for new API structure - 08/07/2025
 //
 
 import Foundation
@@ -13,7 +14,9 @@ struct APIIngredient: Codable, Identifiable {
     let id: String
     let name: String
     let category: String
-    let nutritionalInfo: APINutritionalInfo?
+    let nutritionPer100g: APINutritionalInfo?
+    let createdAt: String
+    let updatedAt: String
 }
 
 struct APINutritionalInfo: Codable {
@@ -22,7 +25,6 @@ struct APINutritionalInfo: Codable {
     let carbs: Double?
     let fat: Double?
     let fiber: Double?
-    let sodium: Double?
 }
 
 struct APIDish: Codable, Identifiable {
@@ -30,43 +32,67 @@ struct APIDish: Codable, Identifiable {
     let name: String
     let description: String?
     let instructions: String?
-    let dishIngredients: [APIDishIngredient]
+    let servings: Int
+    let userId: String
+    let createdAt: String
+    let updatedAt: String
+    let ingredients: [APIDishIngredient]
 }
 
 struct APIDishIngredient: Codable {
-    let ingredient: APIIngredient
+    let id: String
+    let dishId: String
+    let ingredientId: String
     let quantity: Double
     let unit: String
+    let ingredient: APIIngredient
 }
 
 struct APIConsumptionLog: Codable, Identifiable {
     let id: String
-    let consumedAt: String
-    let quantity: Double
-    let unit: String?
+    let userId: String
+    let type: String
     let ingredientId: String?
-    let ingredient: APIIngredient?
     let dishId: String?
+    let quantity: Double?
+    let unit: String?
+    let servings: Double?
+    let consumedAt: String
+    let createdAt: String
+    let ingredient: APIIngredient?
     let dish: APIDish?
+}
+
+struct APIRecommendation: Codable {
+    let dish: APIDish
+    let score: Double
+    let explanation: String
+}
+
+// MARK: - API Error Response Models
+struct APIErrorResponse: Codable {
+    let error: String?
+    let message: String?
 }
 
 // MARK: - API Request Models
 struct CreateIngredientRequest: Codable {
     let name: String
     let category: String
-    let nutritionalInfo: APINutritionalInfo?
+    let nutritionPer100g: APINutritionalInfo?
 }
 
 struct UpdateIngredientRequest: Codable {
     let name: String?
     let category: String?
-    let nutritionalInfo: APINutritionalInfo?
+    let nutritionPer100g: APINutritionalInfo?
 }
 
 struct CreateDishRequest: Codable {
     let name: String
     let description: String?
     let instructions: String?
+    let servings: Int
     let ingredients: [CreateDishIngredientRequest]
 }
 
@@ -76,11 +102,20 @@ struct CreateDishIngredientRequest: Codable {
     let unit: String
 }
 
+struct UpdateDishRequest: Codable {
+    let name: String?
+    let description: String?
+    let instructions: String?
+    let servings: Int?
+    let ingredients: [CreateDishIngredientRequest]?
+}
+
 struct CreateConsumptionLogRequest: Codable {
-    let ingredientId: String?
-    let dishId: String?
-    let quantity: Double
+    let type: String
+    let itemId: String
+    let quantity: Double?
     let unit: String?
+    let servings: Double?
     let consumedAt: String?
 }
 
@@ -91,172 +126,214 @@ class APIService: ObservableObject {
     
     private let baseURL: String
     private let session = URLSession.shared
+    private let authService = AuthService.shared
     
     private init() {
-        // Use secure and trusted API server
-        self.baseURL = "https://nutritrackapi.duckdns.org/api"
+        // Use new API server
+        self.baseURL = "https://api.nerdstips.com/v1"
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func createAuthenticatedRequest(for url: URL, method: String = "GET") -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        
+        if let token = authService.getAuthToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        
+        return request
+    }
+    
+    private func handleResponse<T: Codable>(_ data: Data, _ response: URLResponse, type: T.Type) throws -> T {
+        if let httpResponse = response as? HTTPURLResponse {
+            if httpResponse.statusCode == 401 {
+                // Token expired, logout user
+                Task { await authService.logout() }
+                throw APIError.unauthorized
+            }
+            if httpResponse.statusCode >= 400 {
+                // Try to parse structured error response
+                if let errorResponse = try? JSONDecoder().decode(APIErrorResponse.self, from: data) {
+                    throw APIError.serverErrorWithMessage(httpResponse.statusCode, errorResponse.message ?? errorResponse.error ?? "Unknown error")
+                } else if let errorMessage = String(data: data, encoding: .utf8) {
+                    throw APIError.serverErrorWithMessage(httpResponse.statusCode, errorMessage)
+                } else {
+                    throw APIError.serverError(httpResponse.statusCode)
+                }
+            }
+        }
+        
+        return try JSONDecoder().decode(T.self, from: data)
     }
     
     // MARK: - Ingredients API
     
-    func getIngredients(search: String? = nil, category: String? = nil) async throws -> [APIIngredient] {
-        var components = URLComponents(string: "\(baseURL)/ingredients")!
-        var queryItems: [URLQueryItem] = []
+    func getIngredients() async throws -> [APIIngredient] {
+        let url = URL(string: "\(baseURL)/ingredients")!
+        let request = createAuthenticatedRequest(for: url)
+        let (data, response) = try await session.data(for: request)
         
-        if let search = search, !search.isEmpty {
-            queryItems.append(URLQueryItem(name: "search", value: search))
-        }
-        if let category = category, !category.isEmpty {
-            queryItems.append(URLQueryItem(name: "category", value: category))
-        }
-        
-        if !queryItems.isEmpty {
-            components.queryItems = queryItems
-        }
-        
-        let request = URLRequest(url: components.url!)
-        let (data, _) = try await session.data(for: request)
-        
-        return try JSONDecoder().decode([APIIngredient].self, from: data)
+        return try handleResponse(data, response, type: [APIIngredient].self)
     }
     
     func getIngredient(id: String) async throws -> APIIngredient {
         let url = URL(string: "\(baseURL)/ingredients/\(id)")!
-        let request = URLRequest(url: url)
-        let (data, _) = try await session.data(for: request)
+        let request = createAuthenticatedRequest(for: url)
+        let (data, response) = try await session.data(for: request)
         
-        return try JSONDecoder().decode(APIIngredient.self, from: data)
+        return try handleResponse(data, response, type: APIIngredient.self)
     }
     
     func createIngredient(_ ingredient: CreateIngredientRequest) async throws -> APIIngredient {
         let url = URL(string: "\(baseURL)/ingredients")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var request = createAuthenticatedRequest(for: url, method: "POST")
         request.httpBody = try JSONEncoder().encode(ingredient)
         
-        let (data, _) = try await session.data(for: request)
-        return try JSONDecoder().decode(APIIngredient.self, from: data)
+        let (data, response) = try await session.data(for: request)
+        return try handleResponse(data, response, type: APIIngredient.self)
     }
     
     func updateIngredient(id: String, _ ingredient: UpdateIngredientRequest) async throws -> APIIngredient {
         let url = URL(string: "\(baseURL)/ingredients/\(id)")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var request = createAuthenticatedRequest(for: url, method: "PUT")
         request.httpBody = try JSONEncoder().encode(ingredient)
         
-        let (data, _) = try await session.data(for: request)
-        return try JSONDecoder().decode(APIIngredient.self, from: data)
+        let (data, response) = try await session.data(for: request)
+        return try handleResponse(data, response, type: APIIngredient.self)
     }
     
     func deleteIngredient(id: String) async throws {
         let url = URL(string: "\(baseURL)/ingredients/\(id)")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "DELETE"
+        let request = createAuthenticatedRequest(for: url, method: "DELETE")
         
         let (_, response) = try await session.data(for: request)
         
         if let httpResponse = response as? HTTPURLResponse,
-           httpResponse.statusCode != 204 {
+           httpResponse.statusCode != 200 {
             throw APIError.invalidResponse
         }
     }
     
     // MARK: - Dishes API
     
-    func getDishes(search: String? = nil) async throws -> [APIDish] {
-        var components = URLComponents(string: "\(baseURL)/dishes")!
+    func getDishes() async throws -> [APIDish] {
+        let url = URL(string: "\(baseURL)/dishes")!
+        let request = createAuthenticatedRequest(for: url)
+        let (data, response) = try await session.data(for: request)
         
-        if let search = search, !search.isEmpty {
-            components.queryItems = [URLQueryItem(name: "search", value: search)]
-        }
-        
-        let request = URLRequest(url: components.url!)
-        let (data, _) = try await session.data(for: request)
-        
-        return try JSONDecoder().decode([APIDish].self, from: data)
+        return try handleResponse(data, response, type: [APIDish].self)
     }
     
     func getDish(id: String) async throws -> APIDish {
         let url = URL(string: "\(baseURL)/dishes/\(id)")!
-        let request = URLRequest(url: url)
-        let (data, _) = try await session.data(for: request)
+        let request = createAuthenticatedRequest(for: url)
+        let (data, response) = try await session.data(for: request)
         
-        return try JSONDecoder().decode(APIDish.self, from: data)
+        return try handleResponse(data, response, type: APIDish.self)
     }
     
     func createDish(_ dish: CreateDishRequest) async throws -> APIDish {
         let url = URL(string: "\(baseURL)/dishes")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var request = createAuthenticatedRequest(for: url, method: "POST")
         request.httpBody = try JSONEncoder().encode(dish)
         
-        let (data, _) = try await session.data(for: request)
-        return try JSONDecoder().decode(APIDish.self, from: data)
+        let (data, response) = try await session.data(for: request)
+        return try handleResponse(data, response, type: APIDish.self)
+    }
+    
+    func updateDish(id: String, _ dish: UpdateDishRequest) async throws -> APIDish {
+        let url = URL(string: "\(baseURL)/dishes/\(id)")!
+        var request = createAuthenticatedRequest(for: url, method: "PUT")
+        request.httpBody = try JSONEncoder().encode(dish)
+        
+        let (data, response) = try await session.data(for: request)
+        return try handleResponse(data, response, type: APIDish.self)
     }
     
     func deleteDish(id: String) async throws {
         let url = URL(string: "\(baseURL)/dishes/\(id)")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "DELETE"
+        let request = createAuthenticatedRequest(for: url, method: "DELETE")
         
         let (_, response) = try await session.data(for: request)
         
         if let httpResponse = response as? HTTPURLResponse,
-           httpResponse.statusCode != 204 {
+           httpResponse.statusCode != 200 {
             throw APIError.invalidResponse
         }
     }
     
     // MARK: - Consumption API
     
-    func getConsumptionLogs(days: Int = 30) async throws -> [APIConsumptionLog] {
+    func getConsumptionLogs(days: Int = 7, startDate: String? = nil, endDate: String? = nil) async throws -> [APIConsumptionLog] {
         var components = URLComponents(string: "\(baseURL)/consumption")!
-        components.queryItems = [URLQueryItem(name: "days", value: String(days))]
+        var queryItems: [URLQueryItem] = []
         
-        let request = URLRequest(url: components.url!)
-        let (data, _) = try await session.data(for: request)
+        if let startDate = startDate, let endDate = endDate {
+            queryItems.append(URLQueryItem(name: "startDate", value: startDate))
+            queryItems.append(URLQueryItem(name: "endDate", value: endDate))
+        } else {
+            queryItems.append(URLQueryItem(name: "days", value: String(days)))
+        }
         
-        let decoder = JSONDecoder()
-        return try decoder.decode([APIConsumptionLog].self, from: data)
+        components.queryItems = queryItems
+        
+        let request = createAuthenticatedRequest(for: components.url!)
+        let (data, response) = try await session.data(for: request)
+        
+        return try handleResponse(data, response, type: [APIConsumptionLog].self)
     }
     
     func logConsumption(_ log: CreateConsumptionLogRequest) async throws -> APIConsumptionLog {
         let url = URL(string: "\(baseURL)/consumption")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var request = createAuthenticatedRequest(for: url, method: "POST")
         request.httpBody = try JSONEncoder().encode(log)
         
-        let (data, _) = try await session.data(for: request)
-        return try JSONDecoder().decode(APIConsumptionLog.self, from: data)
+        let (data, response) = try await session.data(for: request)
+        return try handleResponse(data, response, type: APIConsumptionLog.self)
     }
     
-    func getRecentIngredients(days: Int = 7) async throws -> [String] {
-        var components = URLComponents(string: "\(baseURL)/consumption/recent-ingredients")!
-        components.queryItems = [URLQueryItem(name: "days", value: String(days))]
+    func deleteConsumptionLog(id: String) async throws {
+        let url = URL(string: "\(baseURL)/consumption/\(id)")!
+        let request = createAuthenticatedRequest(for: url, method: "DELETE")
         
-        let request = URLRequest(url: components.url!)
-        let (data, _) = try await session.data(for: request)
+        let (_, response) = try await session.data(for: request)
         
-        return try JSONDecoder().decode([String].self, from: data)
+        if let httpResponse = response as? HTTPURLResponse,
+           httpResponse.statusCode != 200 {
+            throw APIError.invalidResponse
+        }
     }
     
     // MARK: - Recommendations API
     
-    func getRecommendations(days: Int = 7, limit: Int = 10) async throws -> [Recommendation] {
-        var components = URLComponents(string: "\(baseURL)/recommendations")!
+    func getRecommendations(days: Int = 7, limit: Int = 10) async throws -> [APIRecommendation] {
+        var components = URLComponents(string: "\(baseURL)/recommendations/dishes")!
         components.queryItems = [
             URLQueryItem(name: "days", value: String(days)),
             URLQueryItem(name: "limit", value: String(limit))
         ]
         
-        let request = URLRequest(url: components.url!)
-        let (data, _) = try await session.data(for: request)
+        let request = createAuthenticatedRequest(for: components.url!)
+        let (data, response) = try await session.data(for: request)
         
-        return try JSONDecoder().decode([Recommendation].self, from: data)
+        return try handleResponse(data, response, type: [APIRecommendation].self)
+    }
+    
+    // MARK: - Health Check
+    
+    func healthCheck() async throws -> Bool {
+        let url = URL(string: "\(baseURL)/health")!
+        let request = URLRequest(url: url)
+        
+        let (_, response) = try await session.data(for: request)
+        
+        if let httpResponse = response as? HTTPURLResponse {
+            return httpResponse.statusCode == 200
+        }
+        return false
     }
 }
 
@@ -266,6 +343,9 @@ enum APIError: Error, LocalizedError {
     case invalidResponse
     case decodingError
     case networkError
+    case unauthorized
+    case serverError(Int)
+    case serverErrorWithMessage(Int, String)
     
     var errorDescription: String? {
         switch self {
@@ -277,6 +357,31 @@ enum APIError: Error, LocalizedError {
             return "Failed to decode response"
         case .networkError:
             return "Network error occurred"
+        case .unauthorized:
+            return "Authentication required"
+        case .serverError(let code):
+            return "Server error: \(code)"
+        case .serverErrorWithMessage(let code, let message):
+            // Handle common error patterns with user-friendly messages
+            if message.contains("Unique constraint failed") || message.contains("already exists") {
+                return "An ingredient with this name already exists. Please choose a different name."
+            }
+            if message.contains("validation") || message.contains("required") {
+                return "Please check that all required fields are filled correctly."
+            }
+            if message.contains("unauthorized") || message.contains("authentication") {
+                return "Authentication required. Please log in again."
+            }
+            if code == 400 {
+                return "Invalid request. Please check your input and try again."
+            }
+            if code == 404 {
+                return "Resource not found."
+            }
+            if code >= 500 {
+                return "Server error. Please try again later."
+            }
+            return "Error: \(message)"
         }
     }
 }

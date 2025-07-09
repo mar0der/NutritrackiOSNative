@@ -10,13 +10,15 @@ import SwiftData
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
-    @StateObject private var apiService = APIService.shared
+    @EnvironmentObject private var authService: AuthService
+    @EnvironmentObject private var apiService: APIService
     @State private var selectedTab = 0
     @State private var selectedDishForLogging: APIDish?
     
     var body: some View {
         TabView(selection: $selectedTab) {
             HomeView()
+                .environmentObject(authService)
                 .tabItem {
                     Label("Home", systemImage: "house")
                 }
@@ -63,6 +65,7 @@ struct ContentView: View {
 // MARK: - Home View
 struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var authService: AuthService
     @Query private var consumptionLogs: [ConsumptionLog]
     @Query private var ingredients: [Ingredient]
     @Query private var dishes: [Dish]
@@ -73,51 +76,72 @@ struct HomeView: View {
                 VStack(spacing: 20) {
                     // Welcome Section
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Welcome to NutriTrack")
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                        
-                        Text("Track your nutrition and discover variety")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text("Welcome, \(authService.currentUser?.name ?? "User")!")
+                                    .font(.largeTitle)
+                                    .fontWeight(.bold)
+                                
+                                Text("Track your nutrition and discover variety")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                            }
+                            
+                            Spacer()
+                            
+                            Button(action: {
+                                Task {
+                                    await authService.logout()
+                                }
+                            }) {
+                                Image(systemName: "person.crop.circle.fill.badge.minus")
+                                    .font(.title2)
+                                    .foregroundColor(.red)
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
                     
                     // Summary Cards
-                    LazyVGrid(columns: [
-                        GridItem(.flexible()),
-                        GridItem(.flexible())
-                    ], spacing: 16) {
-                        SummaryCard(
-                            title: "Ingredients",
-                            value: "\(ingredients.count)",
-                            icon: "carrot",
-                            color: .green
-                        )
+                    VStack(spacing: 16) {
+                        HStack(spacing: 16) {
+                            SummaryCard(
+                                title: "Ingredients",
+                                value: "\(ingredients.count)",
+                                icon: "carrot",
+                                color: .green
+                            )
+                            
+                            SummaryCard(
+                                title: "Dishes",
+                                value: "\(dishes.count)",
+                                icon: "forkandknife",
+                                color: .blue
+                            )
+                        }
                         
-                        SummaryCard(
-                            title: "Dishes",
-                            value: "\(dishes.count)",
-                            icon: "forkandknife",
-                            color: .blue
-                        )
-                        
-                        SummaryCard(
-                            title: "Today's Logs",
-                            value: "\(todaysLogs)",
-                            icon: "chart.bar",
-                            color: .orange
-                        )
-                        
-                        SummaryCard(
-                            title: "Variety Score",
-                            value: "85%",
-                            icon: "sparkles",
-                            color: .purple
-                        )
+                        HStack(spacing: 16) {
+                            SummaryCard(
+                                title: "Today's Logs",
+                                value: "\(todaysLogs)",
+                                icon: "chart.bar",
+                                color: .orange
+                            )
+                            
+                            SummaryCard(
+                                title: "Variety Score",
+                                value: "85%",
+                                icon: "sparkles",
+                                color: .purple
+                            )
+                        }
                     }
                     .padding(.horizontal)
+                    
+                    // Health Integration
+                    HealthIntegrationCard()
+                        .padding(.horizontal)
                     
                     // Quick Actions
                     VStack(alignment: .leading, spacing: 12) {
@@ -228,6 +252,8 @@ struct TrackView: View {
     
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var apiService: APIService
+    @EnvironmentObject private var authService: AuthService
+    @EnvironmentObject private var healthKitManager: HealthKitManager
     @Query private var localLogs: [ConsumptionLog]
     
     @State private var consumptionLogs: [APIConsumptionLog] = []
@@ -292,11 +318,7 @@ struct TrackView: View {
                     await createConsumptionLog(log)
                 }
             }
-            .alert("Error", isPresented: .constant(errorMessage != nil)) {
-                Button("OK") { errorMessage = nil }
-            } message: {
-                Text(errorMessage ?? "")
-            }
+            .customErrorAlert(errorMessage: $errorMessage)
             .task {
                 await loadData()
             }
@@ -369,23 +391,105 @@ struct TrackView: View {
             // Also save to local SwiftData
             let localLog = ConsumptionLog(
                 id: newLog.id,
+                userId: authService.currentUser?.id,
+                type: newLog.type,
                 consumedAt: ISO8601DateFormatter().date(from: newLog.consumedAt) ?? Date(),
                 quantity: newLog.quantity,
                 unit: newLog.unit,
+                servings: newLog.servings,
                 ingredient: availableIngredients.first(where: { $0.id == newLog.ingredientId })?.toLocal(),
-                dish: availableDishes.first(where: { $0.id == newLog.dishId })?.toLocal()
+                dish: availableDishes.first(where: { $0.id == newLog.dishId })?.toLocal(userId: authService.currentUser?.id)
             )
             modelContext.insert(localLog)
+            
+            // Sync nutrition data to HealthKit
+            await syncToHealthKit(consumptionLog: newLog)
+            
         } catch {
             errorMessage = "Failed to log consumption: \(error.localizedDescription)"
         }
+    }
+    
+    private func syncToHealthKit(consumptionLog: APIConsumptionLog) async {
+        guard healthKitManager.isAuthorized else { return }
+        
+        let logDate = ISO8601DateFormatter().date(from: consumptionLog.consumedAt) ?? Date()
+        var nutritionData: [String: Double] = [:]
+        
+        if let ingredient = consumptionLog.ingredient,
+           let nutritionalInfo = ingredient.nutritionPer100g {
+            
+            // Calculate nutrition values based on quantity consumed
+            let quantityMultiplier = (consumptionLog.quantity ?? 0) / 100.0 // Assuming nutritional info is per 100g
+            
+            if let calories = nutritionalInfo.calories {
+                nutritionData["calories"] = calories * quantityMultiplier
+            }
+            if let protein = nutritionalInfo.protein {
+                nutritionData["protein"] = protein * quantityMultiplier
+            }
+            if let carbs = nutritionalInfo.carbs {
+                nutritionData["carbs"] = carbs * quantityMultiplier
+            }
+            if let fat = nutritionalInfo.fat {
+                nutritionData["fat"] = fat * quantityMultiplier
+            }
+            if let fiber = nutritionalInfo.fiber {
+                nutritionData["fiber"] = fiber * quantityMultiplier
+            }
+            // Sodium field removed from new API
+            nutritionData["sodium"] = 0
+            
+        } else if let dish = consumptionLog.dish {
+            
+            // Calculate total nutrition for dish
+            var totalCalories: Double = 0
+            var totalProtein: Double = 0
+            var totalCarbs: Double = 0
+            var totalFat: Double = 0
+            var totalFiber: Double = 0
+            var totalSodium: Double = 0
+            
+            for dishIngredient in dish.ingredients {
+                if let nutritionalInfo = dishIngredient.ingredient.nutritionPer100g {
+                    let ingredientMultiplier = dishIngredient.quantity / 100.0
+                    
+                    totalCalories += (nutritionalInfo.calories ?? 0) * ingredientMultiplier
+                    totalProtein += (nutritionalInfo.protein ?? 0) * ingredientMultiplier
+                    totalCarbs += (nutritionalInfo.carbs ?? 0) * ingredientMultiplier
+                    totalFat += (nutritionalInfo.fat ?? 0) * ingredientMultiplier
+                    totalFiber += (nutritionalInfo.fiber ?? 0) * ingredientMultiplier
+                    // Sodium field removed from new API
+                }
+            }
+            
+            // Apply dish serving size (assuming quantity is servings)
+            let servingMultiplier = consumptionLog.servings ?? 1.0
+            nutritionData["calories"] = totalCalories * servingMultiplier
+            nutritionData["protein"] = totalProtein * servingMultiplier
+            nutritionData["carbs"] = totalCarbs * servingMultiplier
+            nutritionData["fat"] = totalFat * servingMultiplier
+            nutritionData["fiber"] = totalFiber * servingMultiplier
+            nutritionData["sodium"] = 0 // Sodium field removed from new API
+        }
+        
+        // Save to HealthKit
+        await healthKitManager.saveNutritionData(
+            calories: nutritionData["calories"],
+            protein: nutritionData["protein"],
+            carbs: nutritionData["carbs"],
+            fat: nutritionData["fat"],
+            fiber: nutritionData["fiber"],
+            sodium: nutritionData["sodium"],
+            date: logDate
+        )
     }
 }
 
 struct RecommendationsView: View {
     @EnvironmentObject private var apiService: APIService
     
-    @State private var recommendations: [Recommendation] = []
+    @State private var recommendations: [APIRecommendation] = []
     @State private var isLoading = false
     @State private var selectedDays = 7
     @State private var errorMessage: String?
@@ -426,7 +530,7 @@ struct RecommendationsView: View {
                 } else {
                     // Recommendations List
                     List {
-                        ForEach(recommendations, id: \.id) { recommendation in
+                        ForEach(recommendations, id: \.dish.id) { recommendation in
                             RecommendationCard(recommendation: recommendation)
                                 .listRowSeparator(.hidden)
                                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
@@ -449,11 +553,7 @@ struct RecommendationsView: View {
                     .disabled(isLoading)
                 }
             }
-            .alert("Error", isPresented: .constant(errorMessage != nil)) {
-                Button("OK") { errorMessage = nil }
-            } message: {
-                Text(errorMessage ?? "")
-            }
+            .customErrorAlert(errorMessage: $errorMessage)
             .task {
                 await loadRecommendations()
             }
@@ -506,18 +606,18 @@ struct EmptyRecommendationsView: View {
 }
 
 struct RecommendationCard: View {
-    let recommendation: Recommendation
+    let recommendation: APIRecommendation
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Header
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(recommendation.name)
+                    Text(recommendation.dish.name)
                         .font(.headline)
                         .fontWeight(.bold)
                     
-                    if let description = recommendation.description {
+                    if let description = recommendation.dish.description {
                         Text(description)
                             .font(.subheadline)
                             .foregroundColor(.secondary)
@@ -528,7 +628,7 @@ struct RecommendationCard: View {
                 Spacer()
                 
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(Int(recommendation.freshnessScore * 100))%")
+                    Text("\(Int(recommendation.score * 100))%")
                         .font(.title2)
                         .fontWeight(.bold)
                         .foregroundColor(freshnessColor)
@@ -541,7 +641,7 @@ struct RecommendationCard: View {
             
             // Reason Badge
             HStack {
-                Text(recommendation.reason)
+                Text(recommendation.explanation)
                     .font(.caption)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
@@ -551,13 +651,13 @@ struct RecommendationCard: View {
                 
                 Spacer()
                 
-                Text("\(recommendation.dishIngredients.count) ingredients")
+                Text("\(recommendation.dish.ingredients.count) ingredients")
                     .font(.caption)
                     .foregroundColor(.secondary)
             }
             
             // Ingredients Preview
-            if !recommendation.dishIngredients.isEmpty {
+            if !recommendation.dish.ingredients.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Ingredients:")
                         .font(.caption)
@@ -568,7 +668,7 @@ struct RecommendationCard: View {
                         GridItem(.flexible()),
                         GridItem(.flexible())
                     ], spacing: 4) {
-                        ForEach(recommendation.dishIngredients.prefix(4), id: \.id) { dishIngredient in
+                        ForEach(recommendation.dish.ingredients.prefix(4), id: \.id) { dishIngredient in
                             HStack {
                                 Text(iconForCategory(dishIngredient.ingredient.category))
                                     .font(.caption)
@@ -582,8 +682,8 @@ struct RecommendationCard: View {
                             }
                         }
                         
-                        if recommendation.dishIngredients.count > 4 {
-                            Text("+\(recommendation.dishIngredients.count - 4) more")
+                        if recommendation.dish.ingredients.count > 4 {
+                            Text("+\(recommendation.dish.ingredients.count - 4) more")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -592,7 +692,7 @@ struct RecommendationCard: View {
             }
             
             // Instructions Preview
-            if let instructions = recommendation.instructions, !instructions.isEmpty {
+            if let instructions = recommendation.dish.instructions, !instructions.isEmpty {
                 Text(instructions)
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -602,13 +702,13 @@ struct RecommendationCard: View {
             
             // Stats
             HStack {
-                Label("\(recommendation.recentIngredients)", systemImage: "clock")
+                Label("Fresh", systemImage: "clock")
                     .font(.caption)
                     .foregroundColor(.orange)
                 
                 Spacer()
                 
-                Label("\(recommendation.totalIngredients)", systemImage: "list.bullet")
+                Label("\(recommendation.dish.ingredients.count)", systemImage: "list.bullet")
                     .font(.caption)
                     .foregroundColor(.blue)
             }
@@ -619,9 +719,9 @@ struct RecommendationCard: View {
     }
     
     private var freshnessColor: Color {
-        if recommendation.freshnessScore >= 0.7 {
+        if recommendation.score >= 0.7 {
             return .green
-        } else if recommendation.freshnessScore >= 0.4 {
+        } else if recommendation.score >= 0.4 {
             return .orange
         } else {
             return .red
@@ -685,7 +785,7 @@ struct ConsumptionLogRow: View {
                 } else if let dish = log.dish {
                     Text(dish.name)
                         .font(.headline)
-                    Text("Recipe • \(dish.dishIngredients.count) ingredients")
+                    Text("Recipe • \(dish.ingredients.count) ingredients")
                         .font(.caption)
                         .foregroundColor(.green)
                 }
@@ -700,7 +800,7 @@ struct ConsumptionLogRow: View {
             Spacer()
             
             VStack(alignment: .trailing, spacing: 2) {
-                Text("\(Int(log.quantity))")
+                Text("\(Int(log.quantity ?? 0))")
                     .font(.headline)
                     .fontWeight(.semibold)
                 
@@ -843,10 +943,11 @@ struct AddConsumptionLogSheet: View {
         let isoFormatter = ISO8601DateFormatter()
         
         let request = CreateConsumptionLogRequest(
-            ingredientId: selectedType == .ingredient ? selectedIngredientId : nil,
-            dishId: selectedType == .dish ? selectedDishId : nil,
-            quantity: quantity,
-            unit: selectedUnit,
+            type: selectedType == .ingredient ? "ingredient" : "dish",
+            itemId: selectedType == .ingredient ? (selectedIngredientId ?? "") : (selectedDishId ?? ""),
+            quantity: selectedType == .ingredient ? quantity : nil,
+            unit: selectedType == .ingredient ? selectedUnit : nil,
+            servings: selectedType == .dish ? quantity : nil,
             consumedAt: isoFormatter.string(from: consumedAt)
         )
         
@@ -868,18 +969,20 @@ extension APIIngredient {
             id: id,
             name: name,
             category: category,
-            nutritionalInfo: nutritionalInfo?.toLocal()
+            nutritionalInfo: nutritionPer100g?.toLocal()
         )
     }
 }
 
 extension APIDish {
-    func toLocal() -> Dish {
+    func toLocal(userId: String? = nil) -> Dish {
         return Dish(
             id: id,
             name: name,
             description: description,
-            instructions: instructions
+            instructions: instructions,
+            servings: servings,
+            userId: userId
         )
     }
 }

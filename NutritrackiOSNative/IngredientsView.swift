@@ -11,6 +11,7 @@ import SwiftData
 struct IngredientsView: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var apiService: APIService
+    @EnvironmentObject private var authService: AuthService
     @Query private var localIngredients: [Ingredient]
     
     @State private var ingredients: [APIIngredient] = []
@@ -18,7 +19,10 @@ struct IngredientsView: View {
     @State private var selectedCategory = "All"
     @State private var isLoading = false
     @State private var showingAddSheet = false
+    @State private var showingEditSheet = false
+    @State private var selectedIngredientForEdit: APIIngredient?
     @State private var errorMessage: String?
+    @State private var loadTask: Task<Void, Never>?
     
     private let categories = ["All", "Vegetables", "Fruits", "Grains", "Proteins", "Dairy", "Oils", "Spices", "Other"]
     
@@ -35,7 +39,7 @@ struct IngredientsView: View {
                         TextField("Search ingredients...", text: $searchText)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                             .onSubmit {
-                                Task { await loadIngredients() }
+                                loadIngredientsWithCancellation()
                             }
                     }
                     .padding(.horizontal)
@@ -49,7 +53,7 @@ struct IngredientsView: View {
                                     isSelected: selectedCategory == category
                                 ) {
                                     selectedCategory = category
-                                    Task { await loadIngredients() }
+                                    loadIngredientsWithCancellation()
                                 }
                             }
                         }
@@ -75,16 +79,29 @@ struct IngredientsView: View {
                     // Ingredients List
                     List {
                         ForEach(ingredients, id: \.id) { ingredient in
-                            IngredientRow(ingredient: ingredient) {
-                                // TODO: Edit action
-                            } deleteAction: {
-                                await deleteIngredient(ingredient)
-                            }
+                            IngredientRow(ingredient: ingredient)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button(role: .destructive) {
+                                        Task {
+                                            await deleteIngredient(ingredient)
+                                        }
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                    
+                                    Button {
+                                        selectedIngredientForEdit = ingredient
+                                        showingEditSheet = true
+                                    } label: {
+                                        Label("Edit", systemImage: "pencil")
+                                    }
+                                    .tint(.blue)
+                                }
                         }
                     }
                     .listStyle(PlainListStyle())
                     .refreshable {
-                        await loadIngredients()
+                        loadIngredientsWithCancellation()
                     }
                 }
             }
@@ -101,32 +118,46 @@ struct IngredientsView: View {
                     await createIngredient(ingredient)
                 }
             }
-            .alert("Error", isPresented: .constant(errorMessage != nil)) {
-                Button("OK") { errorMessage = nil }
-            } message: {
-                Text(errorMessage ?? "")
+            .sheet(isPresented: $showingEditSheet) {
+                if let ingredientToEdit = selectedIngredientForEdit {
+                    EditIngredientSheet(ingredient: ingredientToEdit) { updatedIngredient in
+                        await updateIngredient(id: ingredientToEdit.id, request: updatedIngredient)
+                    }
+                }
             }
+            .customErrorAlert(errorMessage: $errorMessage)
             .task {
-                await loadIngredients()
+                loadIngredientsWithCancellation()
             }
         }
     }
     
     // MARK: - API Methods
     
+    private func loadIngredientsWithCancellation() {
+        loadTask?.cancel()
+        loadTask = Task {
+            await loadIngredients()
+        }
+    }
+    
     @MainActor
     private func loadIngredients() async {
+        guard !isLoading else { return }
+        
         isLoading = true
         
         do {
-            let searchQuery = searchText.isEmpty ? nil : searchText
-            let categoryFilter = selectedCategory == "All" ? nil : selectedCategory
-            
-            ingredients = try await apiService.getIngredients(
-                search: searchQuery,
-                category: categoryFilter
-            )
+            print("🔄 Loading ingredients from API...")
+            ingredients = try await apiService.getIngredients()
+            print("✅ Successfully loaded \(ingredients.count) ingredients")
+            errorMessage = nil
         } catch {
+            if Task.isCancelled {
+                print("🚫 Ingredients loading cancelled")
+                return
+            }
+            print("❌ Failed to load ingredients: \(error)")
             errorMessage = "Failed to load ingredients: \(error.localizedDescription)"
         }
         
@@ -136,7 +167,10 @@ struct IngredientsView: View {
     @MainActor
     private func createIngredient(_ request: CreateIngredientRequest) async {
         do {
+            print("🔄 Creating ingredient: \(request.name)")
             let newIngredient = try await apiService.createIngredient(request)
+            print("✅ Successfully created ingredient: \(newIngredient.name) with ID: \(newIngredient.id)")
+            
             ingredients.append(newIngredient)
             
             // Also save to local SwiftData
@@ -144,11 +178,37 @@ struct IngredientsView: View {
                 id: newIngredient.id,
                 name: newIngredient.name,
                 category: newIngredient.category,
-                nutritionalInfo: newIngredient.nutritionalInfo?.toLocal()
+                nutritionalInfo: newIngredient.nutritionPer100g?.toLocal()
             )
             modelContext.insert(localIngredient)
+            print("✅ Saved ingredient to local SwiftData")
+            
+            // Clear any previous error messages
+            errorMessage = nil
         } catch {
+            print("❌ Failed to create ingredient: \(error)")
             errorMessage = "Failed to create ingredient: \(error.localizedDescription)"
+        }
+    }
+    
+    @MainActor
+    private func updateIngredient(id: String, request: UpdateIngredientRequest) async {
+        do {
+            let updatedIngredient = try await apiService.updateIngredient(id: id, request)
+            if let index = ingredients.firstIndex(where: { $0.id == id }) {
+                ingredients[index] = updatedIngredient
+            }
+            
+            // Also update local SwiftData
+            if let localIngredient = localIngredients.first(where: { $0.id == id }) {
+                localIngredient.name = updatedIngredient.name
+                localIngredient.category = updatedIngredient.category
+                localIngredient.nutritionalInfo = updatedIngredient.nutritionPer100g?.toLocal()
+            }
+            
+            selectedIngredientForEdit = nil
+        } catch {
+            errorMessage = "Failed to update ingredient: \(error.localizedDescription)"
         }
     }
     
@@ -191,10 +251,6 @@ struct CategoryChip: View {
 // MARK: - Ingredient Row
 struct IngredientRow: View {
     let ingredient: APIIngredient
-    let editAction: () -> Void
-    let deleteAction: () async -> Void
-    
-    @State private var isDeleting = false
     
     var body: some View {
         HStack {
@@ -206,7 +262,7 @@ struct IngredientRow: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                 
-                if let nutritionalInfo = ingredient.nutritionalInfo,
+                if let nutritionalInfo = ingredient.nutritionPer100g,
                    let calories = nutritionalInfo.calories {
                     Text("\(Int(calories)) cal/100g")
                         .font(.caption2)
@@ -215,34 +271,9 @@ struct IngredientRow: View {
             }
             
             Spacer()
-            
-            HStack(spacing: 8) {
-                Button(action: editAction) {
-                    Image(systemName: "pencil")
-                        .foregroundColor(.blue)
-                }
-                .buttonStyle(BorderlessButtonStyle())
-                
-                Button(action: {
-                    isDeleting = true
-                    Task {
-                        await deleteAction()
-                        isDeleting = false
-                    }
-                }) {
-                    if isDeleting {
-                        ProgressView()
-                            .scaleEffect(0.8)
-                    } else {
-                        Image(systemName: "trash")
-                            .foregroundColor(.red)
-                    }
-                }
-                .buttonStyle(BorderlessButtonStyle())
-                .disabled(isDeleting)
-            }
         }
         .padding(.vertical, 4)
+        .contentShape(Rectangle())
     }
 }
 
@@ -364,14 +395,129 @@ struct AddIngredientSheet: View {
             protein: Double(protein),
             carbs: Double(carbs),
             fat: Double(fat),
-            fiber: nil,
-            sodium: nil
+            fiber: nil
         )
         
         let request = CreateIngredientRequest(
             name: name,
             category: selectedCategory,
-            nutritionalInfo: nutritionalInfo
+            nutritionPer100g: nutritionalInfo
+        )
+        
+        await onSave(request)
+        dismiss()
+    }
+}
+
+// MARK: - Edit Ingredient Sheet
+struct EditIngredientSheet: View {
+    let ingredient: APIIngredient
+    let onSave: (UpdateIngredientRequest) async -> Void
+    
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String
+    @State private var selectedCategory: String
+    @State private var calories: String
+    @State private var protein: String
+    @State private var carbs: String
+    @State private var fat: String
+    
+    private let categories = ["Vegetables", "Fruits", "Grains", "Proteins", "Dairy", "Oils", "Spices", "Other"]
+    
+    init(ingredient: APIIngredient, onSave: @escaping (UpdateIngredientRequest) async -> Void) {
+        self.ingredient = ingredient
+        self.onSave = onSave
+        
+        // Initialize state with existing ingredient data
+        _name = State(initialValue: ingredient.name)
+        _selectedCategory = State(initialValue: ingredient.category)
+        _calories = State(initialValue: ingredient.nutritionPer100g?.calories?.description ?? "")
+        _protein = State(initialValue: ingredient.nutritionPer100g?.protein?.description ?? "")
+        _carbs = State(initialValue: ingredient.nutritionPer100g?.carbs?.description ?? "")
+        _fat = State(initialValue: ingredient.nutritionPer100g?.fat?.description ?? "")
+    }
+    
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("Basic Information") {
+                    TextField("Ingredient name", text: $name)
+                    
+                    Picker("Category", selection: $selectedCategory) {
+                        ForEach(categories, id: \.self) { category in
+                            Text(category).tag(category)
+                        }
+                    }
+                }
+                
+                Section("Nutritional Information (per 100g)") {
+                    HStack {
+                        Text("Calories")
+                        Spacer()
+                        TextField("0", text: $calories)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    
+                    HStack {
+                        Text("Protein (g)")
+                        Spacer()
+                        TextField("0", text: $protein)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    
+                    HStack {
+                        Text("Carbs (g)")
+                        Spacer()
+                        TextField("0", text: $carbs)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    
+                    HStack {
+                        Text("Fat (g)")
+                        Spacer()
+                        TextField("0", text: $fat)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+            }
+            .navigationTitle("Edit Ingredient")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Save") {
+                        Task {
+                            await saveIngredient()
+                        }
+                    }
+                    .disabled(name.isEmpty)
+                }
+            }
+        }
+    }
+    
+    private func saveIngredient() async {
+        let nutritionalInfo = APINutritionalInfo(
+            calories: Double(calories),
+            protein: Double(protein),
+            carbs: Double(carbs),
+            fat: Double(fat),
+            fiber: nil
+        )
+        
+        let request = UpdateIngredientRequest(
+            name: name,
+            category: selectedCategory,
+            nutritionPer100g: nutritionalInfo
         )
         
         await onSave(request)
@@ -388,7 +534,7 @@ extension APINutritionalInfo {
             carbs: carbs,
             fat: fat,
             fiber: fiber,
-            sodium: sodium
+            sodium: nil // sodium field removed from new API
         )
     }
 }
