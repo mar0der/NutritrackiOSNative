@@ -76,6 +76,18 @@ struct APIRecommendation: Codable {
     let explanation: String
 }
 
+struct ServerRecommendation: Codable {
+    let id: String
+    let name: String
+    let description: String?
+    let instructions: String?
+    let dishIngredients: [APIDishIngredient]
+    let freshnessScore: Double
+    let recentIngredients: Int
+    let totalIngredients: Int
+    let reason: String
+}
+
 // MARK: - API Error Response Models
 struct APIErrorResponse: Codable {
     let error: String?
@@ -321,7 +333,7 @@ class APIService: ObservableObject {
     // MARK: - Recommendations API
     
     func getRecommendations(days: Int = 7, limit: Int = 10) async throws -> [APIRecommendation] {
-        var components = URLComponents(string: "\(baseURL)/recommendations/dishes")!
+        var components = URLComponents(string: "\(baseURL)/recommendations")!
         components.queryItems = [
             URLQueryItem(name: "days", value: String(days)),
             URLQueryItem(name: "limit", value: String(limit))
@@ -330,7 +342,27 @@ class APIService: ObservableObject {
         let request = createAuthenticatedRequest(for: components.url!)
         let (data, response) = try await session.data(for: request)
         
-        return try handleResponse(data, response, type: [APIRecommendation].self)
+        // Parse the server response which has a different structure
+        let serverRecommendations = try handleResponse(data, response, type: [ServerRecommendation].self)
+        
+        // Convert to client format
+        return serverRecommendations.map { serverRec in
+            APIRecommendation(
+                dish: APIDish(
+                    id: serverRec.id,
+                    name: serverRec.name,
+                    description: serverRec.description,
+                    instructions: serverRec.instructions,
+                    servings: nil,
+                    userId: nil,
+                    createdAt: "",
+                    updatedAt: "",
+                    dishIngredients: serverRec.dishIngredients
+                ),
+                score: serverRec.freshnessScore,
+                explanation: serverRec.reason
+            )
+        }
     }
     
     // MARK: - Health Check

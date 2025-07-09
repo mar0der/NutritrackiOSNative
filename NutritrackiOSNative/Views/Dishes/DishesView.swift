@@ -27,6 +27,20 @@ struct DishesView: View {
     @State private var selectedDish: APIDish?
     @State private var errorMessage: String?
     
+    var filteredDishes: [APIDish] {
+        if searchText.isEmpty {
+            return dishes
+        } else {
+            return dishes.filter { dish in
+                dish.name.localizedCaseInsensitiveContains(searchText) ||
+                (dish.description?.localizedCaseInsensitiveContains(searchText) ?? false) ||
+                dish.ingredients.contains { dishIngredient in
+                    dishIngredient.ingredient?.name.localizedCaseInsensitiveContains(searchText) ?? false
+                }
+            }
+        }
+    }
+    
     var body: some View {
         NavigationView {
             VStack {
@@ -37,9 +51,6 @@ struct DishesView: View {
                     
                     TextField("Search recipes...", text: $searchText)
                         .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .onSubmit {
-                            Task { await loadDishes() }
-                        }
                 }
                 .padding(.horizontal)
                 .padding(.top)
@@ -53,10 +64,32 @@ struct DishesView: View {
                     EmptyDishesView {
                         showingAddSheet = true
                     }
+                } else if filteredDishes.isEmpty {
+                    // No search results
+                    VStack(spacing: 16) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 64))
+                            .foregroundColor(.secondary)
+                        
+                        VStack(spacing: 8) {
+                            Text("No recipes found")
+                                .font(.headline)
+                            
+                            Text("Try adjusting your search terms")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                        
+                        Button("Clear search") {
+                            searchText = ""
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .padding()
                 } else {
                     // Dishes List
                     List {
-                        ForEach(dishes, id: \.id) { dish in
+                        ForEach(filteredDishes, id: \.id) { dish in
                             DishRow(dish: dish) {
                                 selectedDish = dish
                             }
