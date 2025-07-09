@@ -114,12 +114,8 @@ struct DishesView: View {
         isLoading = true
         
         do {
-            let searchQuery = searchText.isEmpty ? nil : searchText
-            print("🍽️ DishesView: Starting to load dishes...")
             dishes = try await apiService.getDishes()
-            print("🍽️ DishesView: Loaded \(dishes.count) dishes successfully")
         } catch {
-            print("🍽️ DishesView: Failed to load dishes - \(error)")
             errorMessage = "Failed to load recipes: \(error.localizedDescription)"
         }
         
@@ -138,7 +134,7 @@ struct DishesView: View {
                 name: newDish.name,
                 description: newDish.description,
                 instructions: newDish.instructions,
-                servings: newDish.servings,
+                servings: newDish.servings ?? 1,
                 userId: authService.currentUser?.id
             )
             modelContext.insert(localDish)

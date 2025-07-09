@@ -549,7 +549,7 @@ extension APIDish {
             name: name,
             description: description,
             instructions: instructions,
-            servings: servings,
+            servings: servings ?? 1,
             userId: userId
         )
     }
