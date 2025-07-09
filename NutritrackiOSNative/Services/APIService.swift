@@ -45,7 +45,7 @@ struct APIDishIngredient: Codable {
     let ingredientId: String
     let quantity: Double
     let unit: String
-    let ingredient: APIIngredient
+    let ingredient: APIIngredient?
 }
 
 struct APIConsumptionLog: Codable, Identifiable {
@@ -223,6 +223,11 @@ class APIService: ObservableObject {
         let url = URL(string: "\(baseURL)/dishes")!
         let request = createAuthenticatedRequest(for: url)
         let (data, response) = try await session.data(for: request)
+        
+        // Handle empty response
+        if data.isEmpty {
+            return []
+        }
         
         return try handleResponse(data, response, type: [APIDish].self)
     }

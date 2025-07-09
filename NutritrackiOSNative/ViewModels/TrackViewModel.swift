@@ -141,7 +141,8 @@ class TrackViewModel: ObservableObject {
             var totalFiber: Double = 0
             
             for dishIngredient in dish.ingredients {
-                if let nutritionalInfo = dishIngredient.ingredient.nutritionPer100g {
+                if let ingredient = dishIngredient.ingredient,
+                   let nutritionalInfo = ingredient.nutritionPer100g {
                     let ingredientMultiplier = dishIngredient.quantity / 100.0
                     
                     totalCalories += (nutritionalInfo.calories ?? 0) * ingredientMultiplier

@@ -149,13 +149,23 @@ struct RecommendationCard: View {
                     ], spacing: 4) {
                         ForEach(recommendation.dish.ingredients.prefix(4), id: \.id) { dishIngredient in
                             HStack {
-                                Text(Constants.Categories.iconForCategory(dishIngredient.ingredient.category))
-                                    .font(.caption)
-                                
-                                Text(dishIngredient.ingredient.name)
-                                    .font(.caption)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
+                                if let ingredient = dishIngredient.ingredient {
+                                    Text(Constants.Categories.iconForCategory(ingredient.category))
+                                        .font(.caption)
+                                    
+                                    Text(ingredient.name)
+                                        .font(.caption)
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
+                                } else {
+                                    Text("🥄")
+                                        .font(.caption)
+                                    
+                                    Text("Unknown")
+                                        .font(.caption)
+                                        .lineLimit(1)
+                                        .truncationMode(.tail)
+                                }
                                 
                                 Spacer()
                             }

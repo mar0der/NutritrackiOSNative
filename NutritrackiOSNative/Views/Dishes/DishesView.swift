@@ -187,9 +187,11 @@ struct DishRow: View {
                     
                     // Ingredient icons preview
                     HStack(spacing: 2) {
-                        ForEach(dish.ingredients.prefix(4), id: \.ingredient.id) { dishIngredient in
-                            Text(iconForCategory(dishIngredient.ingredient.category))
-                                .font(.caption)
+                        ForEach(dish.ingredients.prefix(4), id: \.id) { dishIngredient in
+                            if let ingredient = dishIngredient.ingredient {
+                                Text(iconForCategory(ingredient.category))
+                                    .font(.caption)
+                            }
                         }
                         
                         if dish.ingredients.count > 4 {
@@ -288,19 +290,34 @@ struct DishDetailView: View {
                             .font(.headline)
                         
                         LazyVStack(spacing: 8) {
-                            ForEach(dish.ingredients, id: \.ingredient.id) { dishIngredient in
+                            ForEach(dish.ingredients, id: \.id) { dishIngredient in
                                 HStack {
-                                    Text(iconForCategory(dishIngredient.ingredient.category))
-                                        .font(.title2)
-                                    
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(dishIngredient.ingredient.name)
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
+                                    if let ingredient = dishIngredient.ingredient {
+                                        Text(iconForCategory(ingredient.category))
+                                            .font(.title2)
                                         
-                                        Text(dishIngredient.ingredient.category)
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(ingredient.name)
+                                                .font(.subheadline)
+                                                .fontWeight(.medium)
+                                            
+                                            Text(ingredient.category)
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    } else {
+                                        Text("🥄")
+                                            .font(.title2)
+                                        
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("Unknown Ingredient")
+                                                .font(.subheadline)
+                                                .fontWeight(.medium)
+                                            
+                                            Text("Unknown")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
                                     }
                                     
                                     Spacer()
